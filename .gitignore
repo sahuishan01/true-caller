@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+*.keystore
+*.jks
+certs/
+*.pem
+*.key
+graphify-out/
+.gradle/
+build/
+android/app/build/
+ios/Pods/

@@ -1,0 +1,34 @@
+{
+  "name": "true-calling",
+  "version": "0.1.0",
+  "description": "Fully offline cross-platform group calling over local Wi-Fi and Hotspot on Android and iOS",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "keywords": [
+    "webrtc",
+    "offline-calling",
+    "hotspot",
+    "wifi-calling",
+    "p2p-mesh",
+    "android",
+    "ios",
+    "cross-platform"
+  ],
+  "author": "Ishan Sahu <ishan20015.s@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.5.12",
+    "bun-types": "^1.4.2",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
