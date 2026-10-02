@@ -1,12 +1,16 @@
 {
   "name": "true-calling",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "type": "module",
   "description": "Fully offline cross-platform group calling over local Wi-Fi and Hotspot on Android and iOS",
   "main": "dist/index.js",
   "scripts": {
+    "dev": "vite",
     "test": "bun test tests/",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc && vite build",
+    "build:core": "tsc",
+    "build:app": "vite build"
   },
   "keywords": [
     "webrtc",
@@ -29,6 +33,11 @@
     "typescript": "^5.5.4"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "lucide-react": "^1.49.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "vite": "^8.3.2",
     "ws": "^8.18.0"
   }
 }

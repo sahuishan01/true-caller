@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events';
+import { TypedEventEmitter } from '../utils/event_emitter.js';
 import { PeerProfile, RoomDetails } from '../types/signaling.js';
 import { SignalingClient } from '../signaling/signaling_client.js';
 
@@ -15,7 +15,7 @@ export interface RemotePeerState {
   packetLossPercent?: number;
 }
 
-export class WebRtcMeshCoordinator extends EventEmitter {
+export class WebRtcMeshCoordinator extends TypedEventEmitter {
   private myPeerId: string;
   private signalingClient: SignalingClient;
   private peers: Map<string, RemotePeerState> = new Map();

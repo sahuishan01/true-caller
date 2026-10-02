@@ -1,5 +1,5 @@
-import { EventEmitter } from 'events';
-import { WebSocket } from 'ws';
+import { TypedEventEmitter } from '../utils/event_emitter.js';
+import { createWebSocket, UniversalWebSocket } from '../utils/websocket_factory.js';
 import { NETWORK_CONSTANTS } from '../constants/network_constants.js';
 import {
   JoinAcceptedPayload,
@@ -23,13 +23,13 @@ export interface SignalingClientEvents {
   disconnected: () => void;
 }
 
-export class SignalingClient extends EventEmitter {
-  private ws: WebSocket | null = null;
+export class SignalingClient extends TypedEventEmitter {
+  private ws: UniversalWebSocket | null = null;
   private peerId: string;
   private displayName: string;
   private deviceType: 'android' | 'ios' | 'desktop';
   private pin?: string;
-  private pingTimer: NodeJS.Timeout | null = null;
+  private pingTimer: any = null;
   private isConnected: boolean = false;
 
   constructor(
@@ -52,11 +52,11 @@ export class SignalingClient extends EventEmitter {
   public connect(hostIp: string, port: number = NETWORK_CONSTANTS.SIGNALING_PORT): Promise<JoinAcceptedPayload> {
     return new Promise((resolve, reject) => {
       const url = `ws://${hostIp}:${port}`;
-      this.ws = new WebSocket(url);
+      this.ws = createWebSocket(url);
 
       let isHandshakeComplete = false;
 
-      this.ws.on('open', () => {
+      const onOpen = () => {
         // Send JOIN_REQUEST
         const joinRequest: SignalingMessage<JoinRequestPayload> = {
           type: 'JOIN_REQUEST',
@@ -70,11 +70,12 @@ export class SignalingClient extends EventEmitter {
         };
         this.send(joinRequest);
         this.startHeartbeat();
-      });
+      };
 
-      this.ws.on('message', (data: Buffer | string) => {
+      const onMessage = (data: any) => {
         try {
-          const msg: SignalingMessage = JSON.parse(data.toString());
+          const raw = typeof data === 'string' ? data : data.toString();
+          const msg: SignalingMessage = JSON.parse(raw);
           this.handleIncomingMessage(msg, (accepted) => {
             isHandshakeComplete = true;
             this.isConnected = true;
@@ -85,24 +86,36 @@ export class SignalingClient extends EventEmitter {
         } catch (err) {
           console.error('[SignalingClient] Failed to parse message:', err);
         }
-      });
+      };
 
-      this.ws.on('close', () => {
+      const onClose = () => {
         this.stopHeartbeat();
         this.isConnected = false;
         this.emit('disconnected');
         if (!isHandshakeComplete) {
           reject(new Error('Connection closed before handshake completed'));
         }
-      });
+      };
 
-      this.ws.on('error', (err) => {
+      const onError = (err: any) => {
         this.stopHeartbeat();
         this.isConnected = false;
         if (!isHandshakeComplete) {
           reject(err);
         }
-      });
+      };
+
+      if (typeof (this.ws as any).on === 'function') {
+        (this.ws as any).on('open', onOpen);
+        (this.ws as any).on('message', onMessage);
+        (this.ws as any).on('close', onClose);
+        (this.ws as any).on('error', onError);
+      } else if (typeof (this.ws as any).addEventListener === 'function') {
+        (this.ws as any).addEventListener('open', onOpen);
+        (this.ws as any).addEventListener('message', (e: any) => onMessage(e.data));
+        (this.ws as any).addEventListener('close', onClose);
+        (this.ws as any).addEventListener('error', onError);
+      }
     });
   }
 

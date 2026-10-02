@@ -43,7 +43,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: truecalling-dist
-          path: dist/
+          path: |
+            dist/
+            dist-app/
           retention-days: 7
 
   release:
@@ -68,7 +70,7 @@ jobs:
 
       - name: Package release archive
         run: |
-          tar -czvf truecalling-${{ github.ref_name }}.tar.gz dist/ core/ platform/ ui/ package.json README.md
+          tar -czvf truecalling-${{ github.ref_name }}.tar.gz dist/ dist-app/ core/ platform/ ui/ package.json README.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
