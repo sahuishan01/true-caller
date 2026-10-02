@@ -4,7 +4,7 @@
   "description": "Fully offline cross-platform group calling over local Wi-Fi and Hotspot on Android and iOS",
   "main": "dist/index.js",
   "scripts": {
-    "test": "bun test",
+    "test": "bun test tests/",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },
