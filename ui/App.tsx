@@ -34,9 +34,22 @@ export const App: React.FC = () => {
 
   // Initialize network info on mount
   useEffect(() => {
-    const hostname = window.location.hostname;
-    setLocalIp(hostname);
-    if (hostname === '192.168.43.1' || hostname === '172.20.10.1') {
+    let detectedIp = '127.0.0.1';
+    try {
+      const nativeIp = (window as any).AndroidNative?.getLocalIpAddress?.();
+      if (nativeIp && nativeIp !== '127.0.0.1') {
+        detectedIp = nativeIp;
+      } else if (
+        window.location.hostname &&
+        window.location.hostname !== 'appassets.androidplatform.net' &&
+        window.location.hostname !== 'localhost'
+      ) {
+        detectedIp = window.location.hostname;
+      }
+    } catch {}
+
+    setLocalIp(detectedIp);
+    if (detectedIp === '192.168.43.1' || detectedIp === '172.20.10.1') {
       setIsHotspotHost(true);
     }
   }, []);
@@ -48,11 +61,11 @@ export const App: React.FC = () => {
     const probeLanRooms = async () => {
       try {
         const hostnamesToProbe = [
-          window.location.hostname,
+          localIp,
           '192.168.43.1',
           '172.20.10.1',
           '127.0.0.1',
-        ];
+        ].filter((h) => h && h !== 'appassets.androidplatform.net');
         const uniqueHosts = Array.from(new Set(hostnamesToProbe));
 
         for (const host of uniqueHosts) {
@@ -227,6 +240,9 @@ export const App: React.FC = () => {
     coordinator.on('meshReady', () => {
       setCurrentScreen('active_call');
       setPeers(coordinator.getPeers());
+      try {
+        (window as any).AndroidNative?.startCall?.(room.name, 1);
+      } catch {}
     });
 
     coordinator.on('peerAdded', () => {
@@ -315,7 +331,7 @@ export const App: React.FC = () => {
       roomId: `room-${Date.now().toString(36)}`,
       name: roomName,
       hostId: `host-${Date.now().toString(36)}`,
-      hostIp: window.location.hostname || '127.0.0.1',
+      hostIp: localIp || '127.0.0.1',
       port: 45455,
       hasPin: Boolean(pin && pin.length > 0),
       participantCount: 1,
@@ -325,7 +341,7 @@ export const App: React.FC = () => {
 
     setIsHost(true);
     handleJoinRoom(hostRoom, pin);
-  }, [handleJoinRoom]);
+  }, [handleJoinRoom, localIp]);
 
   // Direct IP connect
   const handleDirectIpConnect = useCallback((ip: string, port: number = 45455) => {
@@ -367,6 +383,10 @@ export const App: React.FC = () => {
   // Leave active call
   const handleLeaveCall = useCallback(() => {
     stopLocalAudioCapture();
+
+    try {
+      (window as any).AndroidNative?.stopCall?.();
+    } catch {}
 
     // Close all WebRTC peer connections
     peerConnectionsRef.current.forEach((pc) => pc.close());

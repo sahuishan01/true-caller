@@ -1,6 +1,6 @@
 {
   "name": "true-calling",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "Fully offline cross-platform group calling over local Wi-Fi and Hotspot on Android and iOS",
   "main": "dist/index.js",
