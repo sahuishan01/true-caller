@@ -54,7 +54,7 @@ jobs:
           UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ vars.KEY_ALIAS || secrets.KEY_ALIAS }}
+          KEY_ALIAS: ${{ vars.KEY_ALIAS }}
         run: |
           if [ -z "$UPLOAD_KEYSTORE_B64" ]; then
             if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -65,12 +65,10 @@ jobs:
           else
             echo "Restoring persistent release keystore from secrets..."
             echo "$UPLOAD_KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > app/upload.keystore
-            cat > keystore.properties <<EOF
-storeFile=upload.keystore
-storePassword=$KEYSTORE_PASSWORD
-keyAlias=${KEY_ALIAS:-truecalling-upload}
-keyPassword=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}
-EOF
+            printf "storeFile=upload.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" \
+              "$KEYSTORE_PASSWORD" \
+              "${KEY_ALIAS:-truecalling-upload}" \
+              "${KEY_PASSWORD:-$KEYSTORE_PASSWORD}" > keystore.properties
           fi
 
       - name: Build Android Release APK & Package iOS Bundle
