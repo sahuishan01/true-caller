@@ -11,6 +11,16 @@ certs/
 *.key
 graphify-out/
 .gradle/
-build/
+android/.gradle/
+android/build/
 android/app/build/
+android/dist/
+android/local.properties
+ios/build/
+ios/DerivedData/
 ios/Pods/
+dist-apk/
+dist-ios/
+*.apk
+*.aab
+*.tar.gz

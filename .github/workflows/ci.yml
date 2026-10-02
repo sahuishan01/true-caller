@@ -33,11 +33,52 @@ jobs:
       - name: Run automated test suite
         run: bun test
 
-      - name: Compile production build
+      - name: Compile production core & web app
         run: bun run build
 
       - name: CLI smoke test
         run: bun run core/cli/run_node.ts
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Android Release APK & Package iOS Bundle
+        run: |
+          # Sync web assets to Android assets
+          mkdir -p android/app/src/main/assets/
+          cp -r dist-app/* android/app/src/main/assets/
+
+          # Build Android Release APK
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          cd ..
+
+          # Sync web assets to iOS
+          mkdir -p ios/TrueCalling/www/
+          cp -r dist-app/* ios/TrueCalling/www/
+
+          # Compute release tag name
+          PKG_VER="v$(node -p "require('./package.json').version")"
+          RELEASE_TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]; then
+            RELEASE_TAG="$PKG_VER"
+          fi
+
+          # Prepare mobile release directory
+          mkdir -p mobile-release
+          APK_FILE=$(find android/app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          cp "$APK_FILE" "mobile-release/TrueCalling-${RELEASE_TAG}.apk"
+          zip -r "mobile-release/TrueCalling-iOS-${RELEASE_TAG}.zip" ios/ -x "ios/.git*" "ios/**/.DS_Store" "ios/build/*" "ios/DerivedData/*"
+
+          echo "Successfully packaged mobile release artifacts:"
+          ls -lh mobile-release/
 
       - name: Archive build artifacts
         uses: actions/upload-artifact@v4
@@ -46,6 +87,13 @@ jobs:
           path: |
             dist/
             dist-app/
+          retention-days: 7
+
+      - name: Archive mobile release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-release
+          path: mobile-release/
           retention-days: 7
 
   release:
@@ -68,16 +116,32 @@ jobs:
       - name: Compile production build
         run: bun run build
 
-      - name: Package release archive
+      - name: Download mobile release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-release
+          path: mobile-release
+
+      - name: Verify release artifacts
         run: |
-          tar -czvf truecalling-${{ github.ref_name }}.tar.gz dist/ dist-app/ core/ platform/ ui/ package.json README.md
+          echo "Downloaded release artifacts:"
+          ls -lh mobile-release/
+          test -f "mobile-release/TrueCalling-${{ github.ref_name }}.apk"
+          test -f "mobile-release/TrueCalling-iOS-${{ github.ref_name }}.zip"
+
+      - name: Package release source tarball
+        run: |
+          tar -czvf "truecalling-${{ github.ref_name }}.tar.gz" dist/ dist-app/ core/ platform/ ui/ android/ ios/ package.json README.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: TrueCalling ${{ github.ref_name }}
-          files: truecalling-${{ github.ref_name }}.tar.gz
+          files: |
+            mobile-release/TrueCalling-${{ github.ref_name }}.apk
+            mobile-release/TrueCalling-iOS-${{ github.ref_name }}.zip
+            truecalling-${{ github.ref_name }}.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: false
