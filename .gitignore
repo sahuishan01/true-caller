@@ -6,6 +6,8 @@ dist-app/
 .DS_Store
 *.keystore
 *.jks
+keystore.properties
+android/keystore.properties
 certs/
 *.pem
 *.key

@@ -25,7 +25,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionName = System.getenv("GITHUB_REF_NAME")?.removePrefix("v") ?: "0.1.3"
+        versionName = System.getenv("GITHUB_REF_NAME")?.removePrefix("v") ?: "0.1.4"
     }
 
     signingConfigs {
@@ -38,7 +38,7 @@ android {
             if (resolvedStoreFile != null && resolvedStoreFile.exists()) {
                 storeFile = resolvedStoreFile
                 storePassword = signingProp("storePassword", "KEYSTORE_PASSWORD")
-                keyAlias = signingProp("keyAlias", "KEY_ALIAS") ?: "truecalling-key"
+                keyAlias = signingProp("keyAlias", "KEY_ALIAS") ?: "truecalling-upload"
                 keyPassword = signingProp("keyPassword", "KEY_PASSWORD") ?: storePassword
             }
         }
@@ -50,12 +50,7 @@ android {
         }
         release {
             isMinifyEnabled = false
-            val relSigning = signingConfigs.findByName("release")
-            if (relSigning?.storeFile != null) {
-                signingConfig = relSigning
-            } else {
-                signingConfig = signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

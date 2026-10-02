@@ -48,6 +48,31 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Setup release signing keystore
+        working-directory: android
+        env:
+          UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ vars.KEY_ALIAS || secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$UPLOAD_KEYSTORE_B64" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "::error::UPLOAD_KEYSTORE_B64 secret is not configured; refusing to build release with ephemeral keys to prevent signature conflicts." >&2
+              exit 1
+            fi
+            echo "Skipping persistent keystore restoration for non-tag branch run."
+          else
+            echo "Restoring persistent release keystore from secrets..."
+            echo "$UPLOAD_KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > app/upload.keystore
+            cat > keystore.properties <<EOF
+storeFile=upload.keystore
+storePassword=$KEYSTORE_PASSWORD
+keyAlias=${KEY_ALIAS:-truecalling-upload}
+keyPassword=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}
+EOF
+          fi
+
       - name: Build Android Release APK & Package iOS Bundle
         run: |
           # Sync web assets to Android assets
