@@ -21,6 +21,9 @@ export interface SignalingClientEvents {
   muteStatus: (peerId: string, isMuted: boolean) => void;
   audioLevel: (peerId: string, level: number, isSpeaking: boolean) => void;
   disconnected: () => void;
+  reconnecting: (info: { attempt: number; maxAttempts: number; delayMs: number }) => void;
+  reconnected: () => void;
+  reconnectFailed: () => void;
 }
 
 export class SignalingClient extends TypedEventEmitter {
@@ -31,25 +34,41 @@ export class SignalingClient extends TypedEventEmitter {
   private pin?: string;
   private pingTimer: any = null;
   private isConnected: boolean = false;
+  private lastHostIp: string = '';
+  private lastPort: number = NETWORK_CONSTANTS.SIGNALING_PORT;
+  private autoReconnect: boolean = true;
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 5;
+  private reconnectTimer: any = null;
+  private isIntentionalClose: boolean = false;
 
   constructor(
     peerId: string,
     displayName: string,
     deviceType: 'android' | 'ios' | 'desktop' = 'android',
-    pin?: string
+    pin?: string,
+    autoReconnect: boolean = true
   ) {
     super();
     this.peerId = peerId;
     this.displayName = displayName;
     this.deviceType = deviceType;
     this.pin = pin;
+    this.autoReconnect = autoReconnect;
   }
-
   public getMyPeerId(): string {
     return this.peerId;
   }
 
+  public getIsConnected(): boolean {
+    return this.isConnected;
+  }
+
   public connect(hostIp: string, port: number = NETWORK_CONSTANTS.SIGNALING_PORT): Promise<JoinAcceptedPayload> {
+    this.lastHostIp = hostIp;
+    this.lastPort = port;
+    this.isIntentionalClose = false;
+
     return new Promise((resolve, reject) => {
       const url = `ws://${hostIp}:${port}`;
       this.ws = createWebSocket(url);
@@ -79,6 +98,11 @@ export class SignalingClient extends TypedEventEmitter {
           this.handleIncomingMessage(msg, (accepted) => {
             isHandshakeComplete = true;
             this.isConnected = true;
+            this.reconnectAttempts = 0;
+            if (this.reconnectTimer) {
+              clearTimeout(this.reconnectTimer);
+              this.reconnectTimer = null;
+            }
             resolve(accepted);
           }, (rejectedReason) => {
             reject(new Error(`Join rejected: ${rejectedReason}`));
@@ -90,10 +114,16 @@ export class SignalingClient extends TypedEventEmitter {
 
       const onClose = () => {
         this.stopHeartbeat();
+        const wasConnected = this.isConnected;
         this.isConnected = false;
         this.emit('disconnected');
+
         if (!isHandshakeComplete) {
           reject(new Error('Connection closed before handshake completed'));
+        }
+
+        if (wasConnected && !this.isIntentionalClose && this.autoReconnect) {
+          this.scheduleReconnect();
         }
       };
 
@@ -117,6 +147,47 @@ export class SignalingClient extends TypedEventEmitter {
         (this.ws as any).addEventListener('error', onError);
       }
     });
+  }
+
+  public scheduleReconnect(): void {
+    if (this.isIntentionalClose || !this.autoReconnect) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.emit('reconnectFailed');
+      return;
+    }
+
+    this.reconnectAttempts++;
+    const delayMs = Math.min(8000, 1000 * Math.pow(1.5, this.reconnectAttempts - 1));
+    this.emit('reconnecting', {
+      attempt: this.reconnectAttempts,
+      maxAttempts: this.maxReconnectAttempts,
+      delayMs,
+    });
+
+    this.reconnectTimer = setTimeout(async () => {
+      if (this.isIntentionalClose) return;
+      try {
+        await this.connect(this.lastHostIp, this.lastPort);
+        this.emit('reconnected');
+      } catch {
+        this.scheduleReconnect();
+      }
+    }, delayMs);
+  }
+
+  public reconnectNow(): Promise<JoinAcceptedPayload> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+    this.isIntentionalClose = false;
+    return this.connect(this.lastHostIp, this.lastPort);
   }
 
   private handleIncomingMessage(
@@ -236,6 +307,11 @@ export class SignalingClient extends TypedEventEmitter {
   }
 
   public leave(): void {
+    this.isIntentionalClose = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.isConnected && this.ws) {
       this.send({
         type: 'LEAVE_ROOM',
@@ -248,6 +324,11 @@ export class SignalingClient extends TypedEventEmitter {
   }
 
   public disconnect(): void {
+    this.isIntentionalClose = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.stopHeartbeat();
     if (this.ws) {
       try {

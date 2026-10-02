@@ -79,6 +79,19 @@ export class WebRtcMeshCoordinator extends TypedEventEmitter {
         this.emit('audioLevelUpdated', peerId, level, isSpeaking);
       }
     });
+
+    this.signalingClient.on('reconnecting', (info) => {
+      this.emit('meshReconnecting', info);
+    });
+
+    this.signalingClient.on('reconnected', () => {
+      this.emit('meshReconnected');
+      this.restartMeshIce();
+    });
+
+    this.signalingClient.on('reconnectFailed', () => {
+      this.emit('meshReconnectFailed');
+    });
   }
 
   /**
@@ -187,6 +200,27 @@ export class WebRtcMeshCoordinator extends TypedEventEmitter {
     if (peerState) {
       peerState.connectionState = state;
       this.emit('peerUpdated', peerState);
+
+      if (state === 'disconnected' || state === 'failed') {
+        this.emit('peerConnectionInterrupted', peerId);
+        if (this.shouldInitiateOffer(peerId)) {
+          this.emit('iceRestartRequired', peerId);
+        }
+      }
+    }
+  }
+
+  public restartIce(peerId: string): void {
+    if (this.peers.has(peerId)) {
+      this.emit('iceRestartRequired', peerId);
+    }
+  }
+
+  public restartMeshIce(): void {
+    for (const peerId of this.peers.keys()) {
+      if (this.shouldInitiateOffer(peerId)) {
+        this.emit('iceRestartRequired', peerId);
+      }
     }
   }
 

@@ -21,8 +21,13 @@ import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import com.truecalling.audio.AudioManagerHelper
+import com.truecalling.server.EmbeddedDeviceServer
 import com.truecalling.service.CallForegroundService
+import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -30,6 +35,9 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var audioManagerHelper: AudioManagerHelper
+    private var embeddedServer: EmbeddedDeviceServer? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val PERMISSION_REQUEST_CODE = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,6 +45,38 @@ class MainActivity : ComponentActivity() {
 
         audioManagerHelper = AudioManagerHelper(this)
         requestAppPermissions()
+
+        // Start embedded server for zero-config HTTP device info, invites & signaling mesh
+        embeddedServer = EmbeddedDeviceServer(45455) { inviteJson ->
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('truecall_invite', { detail: ${inviteJson} }));",
+                    null
+                )
+            }
+        }
+        embeddedServer?.start()
+
+        // Register network listener to automatically notify WebView when local network status changes
+        try {
+            connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    runOnUiThread {
+                        webView.evaluateJavascript("window.dispatchEvent(new Event('online'));", null)
+                    }
+                }
+
+                override fun onLost(network: Network) {
+                    runOnUiThread {
+                        webView.evaluateJavascript("window.dispatchEvent(new Event('offline'));", null)
+                    }
+                }
+            }
+            networkCallback?.let { connectivityManager?.registerDefaultNetworkCallback(it) }
+        } catch (e: Exception) {
+            Log.e("TrueCalling", "Failed to register network callback", e)
+        }
 
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
@@ -200,6 +240,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         audioManagerHelper.stopCallAudio()
+        try {
+            networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
+        } catch (e: Exception) {}
+        embeddedServer?.stop()
         super.onDestroy()
     }
 
@@ -207,6 +251,30 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun getLocalIpAddress(): String {
             return activity.getLocalIpAddress()
+        }
+
+        @JavascriptInterface
+        fun updateDeviceProfile(displayName: String, status: String, currentRoomName: String) {
+            activity.embeddedServer?.displayName = displayName
+            activity.embeddedServer?.status = status
+            activity.embeddedServer?.currentRoomName = if (currentRoomName.isNotEmpty()) currentRoomName else null
+        }
+
+        @JavascriptInterface
+        fun setHostedRoom(roomDetailsJsonStr: String) {
+            try {
+                activity.embeddedServer?.roomDetailsJson = JSONObject(roomDetailsJsonStr)
+                activity.embeddedServer?.status = "hosting"
+            } catch (e: Exception) {
+                Log.e("TrueCalling", "Failed to set hosted room in native server", e)
+            }
+        }
+
+        @JavascriptInterface
+        fun clearHostedRoom() {
+            activity.embeddedServer?.roomDetailsJson = null
+            activity.embeddedServer?.status = "available"
+            activity.embeddedServer?.currentRoomName = null
         }
 
         @JavascriptInterface

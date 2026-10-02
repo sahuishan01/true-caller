@@ -6,6 +6,7 @@ import { ParticipantGrid } from '../components/ParticipantGrid.js';
 import { CallControlBar } from '../components/CallControlBar.js';
 import { CallStatsModal } from '../components/CallStatsModal.js';
 import { QrCodeModal } from '../components/QrCodeModal.js';
+import { ReconnectionBanner } from '../components/ReconnectionBanner.js';
 import { THEME_TOKENS } from '../theme/tokens.js';
 
 export interface ActiveCallScreenProps {
@@ -16,6 +17,9 @@ export interface ActiveCallScreenProps {
   localAudioLevel: number;
   audioRoute: AudioRoute;
   peers: RemotePeerState[];
+  reconnectStatus?: 'connected' | 'reconnecting' | 'offline' | 'reconnect_failed';
+  reconnectAttempt?: number;
+  onRetryReconnect?: () => void;
   onToggleMute: () => void;
   onToggleAudioRoute: () => void;
   onLeaveCall: () => void;
@@ -29,6 +33,9 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   localAudioLevel,
   audioRoute,
   peers,
+  reconnectStatus = 'connected',
+  reconnectAttempt = 1,
+  onRetryReconnect,
   onToggleMute,
   onToggleAudioRoute,
   onLeaveCall,
@@ -62,6 +69,13 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         paddingBottom: '100px', // Space for floating CallControlBar
       }}
     >
+      {/* Reconnection Status Banner */}
+      <ReconnectionBanner
+        status={reconnectStatus}
+        attempt={reconnectAttempt}
+        onRetryNow={onRetryReconnect}
+      />
+
       {/* Top Header */}
       <div
         style={{

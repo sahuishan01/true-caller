@@ -1,10 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { RoomDetails, PeerProfile } from '../core/types/signaling.js';
+import {
+  RoomDetails,
+  PeerProfile,
+  DiscoveredDevice,
+  CallInvitePayload,
+} from '../core/types/signaling.js';
 import { RemotePeerState, WebRtcMeshCoordinator } from '../core/webrtc/mesh_coordinator.js';
 import { AudioEngineManager, AudioRoute } from '../core/webrtc/audio_engine.js';
 import { SignalingClient } from '../core/signaling/signaling_client.js';
+import { DeviceDiscoveryManager } from '../core/discovery/device_discovery.js';
 import { HomeScreen } from './screens/HomeScreen.js';
 import { ActiveCallScreen } from './screens/ActiveCallScreen.js';
+import { IncomingCallModal } from './components/IncomingCallModal.js';
+import { ReconnectionBanner } from './components/ReconnectionBanner.js';
 
 export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<'home' | 'active_call'>('home');
@@ -14,6 +22,7 @@ export const App: React.FC = () => {
   const [localIp, setLocalIp] = useState<string>('127.0.0.1');
   const [isHotspotHost, setIsHotspotHost] = useState<boolean>(false);
   const [discoveredRooms, setDiscoveredRooms] = useState<RoomDetails[]>([]);
+  const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
   const [currentRoom, setCurrentRoom] = useState<RoomDetails | null>(null);
   const [isHost, setIsHost] = useState<boolean>(false);
   const [peers, setPeers] = useState<RemotePeerState[]>([]);
@@ -21,7 +30,17 @@ export const App: React.FC = () => {
   const [audioRoute, setAudioRoute] = useState<AudioRoute>('speaker');
   const [localAudioLevel, setLocalAudioLevel] = useState<number>(0);
 
-  // References to active media and peer connections
+  // Auto Reconnection & Network State
+  const [reconnectStatus, setReconnectStatus] = useState<
+    'connected' | 'reconnecting' | 'offline' | 'reconnect_failed'
+  >('connected');
+  const [reconnectAttempt, setReconnectAttempt] = useState<number>(1);
+  const [isScanningDevices, setIsScanningDevices] = useState<boolean>(false);
+
+  // Incoming Call Invitation
+  const [pendingInvite, setPendingInvite] = useState<CallInvitePayload | null>(null);
+
+  // References to active media, connections, and managers
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -31,6 +50,7 @@ export const App: React.FC = () => {
   const signalingClientRef = useRef<SignalingClient | null>(null);
   const coordinatorRef = useRef<WebRtcMeshCoordinator | null>(null);
   const audioEngineRef = useRef<AudioEngineManager>(new AudioEngineManager());
+  const discoveryManagerRef = useRef<DeviceDiscoveryManager | null>(null);
 
   // Initialize network info on mount
   useEffect(() => {
@@ -52,6 +72,96 @@ export const App: React.FC = () => {
     if (detectedIp === '192.168.43.1' || detectedIp === '172.20.10.1') {
       setIsHotspotHost(true);
     }
+  }, []);
+
+  // Initialize Device Discovery Manager
+  useEffect(() => {
+    const discovery = new DeviceDiscoveryManager({
+      displayName: localDisplayName,
+      ip: localIp,
+      port: 45455,
+      deviceType: 'android',
+    });
+    discoveryManagerRef.current = discovery;
+
+    discovery.on('deviceDiscovered', () => {
+      setDiscoveredDevices(discovery.getDiscoveredDevices());
+    });
+    discovery.on('deviceUpdated', () => {
+      setDiscoveredDevices(discovery.getDiscoveredDevices());
+    });
+    discovery.on('deviceLost', () => {
+      setDiscoveredDevices(discovery.getDiscoveredDevices());
+    });
+
+    discovery.startDiscovery(3000);
+
+    try {
+      (window as any).AndroidNative?.updateDeviceProfile?.(
+        localDisplayName,
+        currentScreen === 'active_call' ? 'in_call' : 'available',
+        currentRoom?.name || ''
+      );
+    } catch {}
+
+    return () => {
+      discovery.stopDiscovery();
+    };
+  }, [localIp, localDisplayName]);
+
+  // Listen for incoming call invites via Native Bridge and Custom Events
+  useEffect(() => {
+    const handleNativeInvite = (e: any) => {
+      if (e.detail && e.detail.roomId) {
+        setPendingInvite(e.detail as CallInvitePayload);
+      }
+    };
+
+    window.addEventListener('truecall_invite', handleNativeInvite);
+    (window as any).onCallInviteReceived = (invite: CallInvitePayload) => {
+      setPendingInvite(invite);
+    };
+
+    return () => {
+      window.removeEventListener('truecall_invite', handleNativeInvite);
+      delete (window as any).onCallInviteReceived;
+    };
+  }, []);
+
+  // Network State Listeners for Auto Reconnect on Same Network
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log('[TrueCalling] Local network connection restored');
+      setReconnectStatus((prev) => {
+        if (prev === 'offline' || prev === 'reconnect_failed') {
+          if (signalingClientRef.current) {
+            signalingClientRef.current.reconnectNow().catch(() => {});
+          }
+          if (coordinatorRef.current) {
+            coordinatorRef.current.restartMeshIce();
+          }
+          return 'reconnecting';
+        }
+        return prev;
+      });
+
+      if (discoveryManagerRef.current) {
+        discoveryManagerRef.current.scanNetwork();
+      }
+    };
+
+    const handleOffline = () => {
+      console.log('[TrueCalling] Local network disconnected');
+      setReconnectStatus('offline');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   // Poll for LAN rooms via fast-probe
@@ -95,7 +205,7 @@ export const App: React.FC = () => {
     probeLanRooms();
     const interval = setInterval(probeLanRooms, 4000);
     return () => clearInterval(interval);
-  }, [currentScreen]);
+  }, [currentScreen, localIp]);
 
   // Start local microphone capture and audio level analysis
   const startLocalAudioCapture = useCallback(async () => {
@@ -222,26 +332,28 @@ export const App: React.FC = () => {
   const handleJoinRoom = useCallback(async (room: RoomDetails, pin?: string) => {
     localStorage.setItem('truecall_name', localDisplayName);
     setCurrentRoom(room);
-    setIsHost(false);
+    setReconnectStatus('connected');
 
     // 1. Capture local audio
     await startLocalAudioCapture();
 
-    // 2. Initialize Signaling Client
+    // 2. Initialize Signaling Client with auto-reconnect enabled
     const myPeerId = `peer-${Date.now().toString(36)}`;
-    const client = new SignalingClient(myPeerId, localDisplayName, 'android', pin);
+    const client = new SignalingClient(myPeerId, localDisplayName, 'android', pin, true);
     signalingClientRef.current = client;
 
     // 3. Initialize Mesh Coordinator
     const coordinator = new WebRtcMeshCoordinator(client);
     coordinatorRef.current = coordinator;
 
-    // 4. Bind Coordinator Events
+    // 4. Bind Coordinator & Signaling Events
     coordinator.on('meshReady', () => {
       setCurrentScreen('active_call');
       setPeers(coordinator.getPeers());
+      setReconnectStatus('connected');
       try {
         (window as any).AndroidNative?.startCall?.(room.name, 1);
+        (window as any).AndroidNative?.updateDeviceProfile?.(localDisplayName, 'in_call', room.name);
       } catch {}
     });
 
@@ -270,6 +382,19 @@ export const App: React.FC = () => {
 
     coordinator.on('audioLevelUpdated', () => {
       setPeers([...coordinator.getPeers()]);
+    });
+
+    coordinator.on('iceRestartRequired', async (remotePeerId: string) => {
+      try {
+        console.log('[WebRTC] Initiating ICE restart for peer:', remotePeerId);
+        const pc = getOrCreatePeerConnection(remotePeerId);
+        const offer = await pc.createOffer({ iceRestart: true });
+        const optimizedSdp = audioEngineRef.current.optimizeVoiceSdp(offer.sdp || '');
+        await pc.setLocalDescription({ type: 'offer', sdp: optimizedSdp });
+        coordinator.handleLocalOfferCreated(remotePeerId, optimizedSdp);
+      } catch (err) {
+        console.error('[WebRTC] Error restarting ICE for peer:', remotePeerId, err);
+      }
     });
 
     coordinator.on('createOfferRequired', async (remotePeerId: string) => {
@@ -317,6 +442,24 @@ export const App: React.FC = () => {
       }
     });
 
+    // Auto-reconnect handling on signaling client
+    client.on('reconnecting', (info) => {
+      console.log(`[SignalingClient] Reconnecting attempt ${info.attempt}/${info.maxAttempts}`);
+      setReconnectStatus('reconnecting');
+      setReconnectAttempt(info.attempt);
+    });
+
+    client.on('reconnected', () => {
+      console.log('[SignalingClient] Successfully reconnected to mesh');
+      setReconnectStatus('connected');
+      setReconnectAttempt(1);
+    });
+
+    client.on('reconnectFailed', () => {
+      console.warn('[SignalingClient] Auto-reconnect attempts exhausted');
+      setReconnectStatus('reconnect_failed');
+    });
+
     try {
       await client.connect(room.hostIp, room.port);
     } catch (err: any) {
@@ -325,39 +468,119 @@ export const App: React.FC = () => {
     }
   }, [localDisplayName, startLocalAudioCapture, stopLocalAudioCapture, getOrCreatePeerConnection]);
 
-  // Host a new call
-  const handleHostCall = useCallback((roomName: string, pin?: string) => {
-    const hostRoom: RoomDetails = {
-      roomId: `room-${Date.now().toString(36)}`,
-      name: roomName,
-      hostId: `host-${Date.now().toString(36)}`,
-      hostIp: localIp || '127.0.0.1',
-      port: 45455,
-      hasPin: Boolean(pin && pin.length > 0),
-      participantCount: 1,
-      maxParticipants: 8,
-      createdAt: Date.now(),
-    };
+  // Host a new call and send explicit invites to selected devices
+  const handleHostCallAndInvite = useCallback(
+    async (
+      roomName: string,
+      pin: string | undefined,
+      invitedDevices: DiscoveredDevice[]
+    ) => {
+      const roomId = `room-${Date.now().toString(36)}`;
+      const hostId = `host-${Date.now().toString(36)}`;
+      const hostRoom: RoomDetails = {
+        roomId,
+        name: roomName,
+        hostId,
+        hostIp: localIp || '127.0.0.1',
+        port: 45455,
+        hasPin: Boolean(pin && pin.length > 0),
+        participantCount: 1,
+        maxParticipants: 8,
+        createdAt: Date.now(),
+      };
 
-    setIsHost(true);
-    handleJoinRoom(hostRoom, pin);
-  }, [handleJoinRoom, localIp]);
+      try {
+        (window as any).AndroidNative?.setHostedRoom?.(JSON.stringify(hostRoom));
+      } catch {}
+
+      setIsHost(true);
+      await handleJoinRoom(hostRoom, pin);
+
+      // Send invitations to each selected device
+      if (invitedDevices && invitedDevices.length > 0 && discoveryManagerRef.current) {
+        for (const target of invitedDevices) {
+          const invite: CallInvitePayload = {
+            inviteId: `inv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            hostPeerId: hostId,
+            hostDisplayName: localDisplayName,
+            hostIp: localIp || '127.0.0.1',
+            port: 45455,
+            roomId,
+            roomName,
+            pin,
+            timestamp: Date.now(),
+          };
+
+          discoveryManagerRef.current
+            .sendCallInvite(target.ip, invite, target.port)
+            .catch(() => {});
+        }
+      }
+    },
+    [handleJoinRoom, localIp, localDisplayName]
+  );
+
+  // Direct Call to a single device
+  const handleCallSingleDevice = useCallback(
+    (device: DiscoveredDevice) => {
+      handleHostCallAndInvite(`Call with ${device.displayName}`, undefined, [device]);
+    },
+    [handleHostCallAndInvite]
+  );
+
+  // Manual Trigger for Scanning Devices
+  const handleScanDevicesNow = useCallback(async () => {
+    if (discoveryManagerRef.current) {
+      setIsScanningDevices(true);
+      await discoveryManagerRef.current.scanNetwork();
+      setDiscoveredDevices(discoveryManagerRef.current.getDiscoveredDevices());
+      setIsScanningDevices(false);
+    }
+  }, []);
 
   // Direct IP connect
-  const handleDirectIpConnect = useCallback((ip: string, port: number = 45455) => {
-    const directRoom: RoomDetails = {
-      roomId: `direct-${ip}`,
-      name: `Call on ${ip}`,
-      hostId: `host-${ip}`,
-      hostIp: ip,
-      port,
-      hasPin: false,
-      participantCount: 1,
-      maxParticipants: 8,
-      createdAt: Date.now(),
-    };
-    handleJoinRoom(directRoom);
-  }, [handleJoinRoom]);
+  const handleDirectIpConnect = useCallback(
+    (ip: string, port: number = 45455) => {
+      const directRoom: RoomDetails = {
+        roomId: `direct-${ip}`,
+        name: `Call on ${ip}`,
+        hostId: `host-${ip}`,
+        hostIp: ip,
+        port,
+        hasPin: false,
+        participantCount: 1,
+        maxParticipants: 8,
+        createdAt: Date.now(),
+      };
+      handleJoinRoom(directRoom);
+    },
+    [handleJoinRoom]
+  );
+
+  // Handle Accept Incoming Call
+  const handleAcceptInvite = useCallback(
+    (invite: CallInvitePayload) => {
+      setPendingInvite(null);
+      const room: RoomDetails = {
+        roomId: invite.roomId,
+        name: invite.roomName,
+        hostId: invite.hostPeerId,
+        hostIp: invite.hostIp,
+        port: invite.port,
+        hasPin: Boolean(invite.pin),
+        participantCount: 2,
+        maxParticipants: 8,
+        createdAt: invite.timestamp,
+      };
+      handleJoinRoom(room, invite.pin);
+    },
+    [handleJoinRoom]
+  );
+
+  // Handle Decline Incoming Call
+  const handleDeclineInvite = useCallback((_invite: CallInvitePayload) => {
+    setPendingInvite(null);
+  }, []);
 
   // Toggle Mute
   const handleToggleMute = useCallback(() => {
@@ -386,6 +609,8 @@ export const App: React.FC = () => {
 
     try {
       (window as any).AndroidNative?.stopCall?.();
+      (window as any).AndroidNative?.clearHostedRoom?.();
+      (window as any).AndroidNative?.updateDeviceProfile?.(localDisplayName, 'available', '');
     } catch {}
 
     // Close all WebRTC peer connections
@@ -412,19 +637,43 @@ export const App: React.FC = () => {
     setPeers([]);
     setCurrentRoom(null);
     setIsMuted(false);
+    setReconnectStatus('connected');
     setCurrentScreen('home');
-  }, [stopLocalAudioCapture]);
+  }, [stopLocalAudioCapture, localDisplayName]);
+
+  const handleRetryReconnect = useCallback(() => {
+    if (signalingClientRef.current) {
+      setReconnectStatus('reconnecting');
+      signalingClientRef.current.reconnectNow().catch(() => {});
+    }
+    if (coordinatorRef.current) {
+      coordinatorRef.current.restartMeshIce();
+    }
+  }, []);
 
   return (
     <div>
+      {/* Reconnection Banner on Home Screen when network is offline */}
+      {currentScreen === 'home' && reconnectStatus !== 'connected' && (
+        <ReconnectionBanner
+          status={reconnectStatus}
+          attempt={reconnectAttempt}
+          onRetryNow={handleRetryReconnect}
+        />
+      )}
+
       {currentScreen === 'home' ? (
         <HomeScreen
           localIp={localIp}
           isHotspotHost={isHotspotHost}
           discoveredRooms={discoveredRooms}
-          onHostCall={handleHostCall}
+          discoveredDevices={discoveredDevices}
+          onHostCallAndInvite={handleHostCallAndInvite}
           onJoinRoom={(room, pin) => handleJoinRoom(room, pin)}
           onDirectIpConnect={handleDirectIpConnect}
+          onCallSingleDevice={handleCallSingleDevice}
+          onScanDevicesNow={handleScanDevicesNow}
+          isScanningDevices={isScanningDevices}
         />
       ) : (
         currentRoom && (
@@ -436,11 +685,23 @@ export const App: React.FC = () => {
             localAudioLevel={localAudioLevel}
             audioRoute={audioRoute}
             peers={peers}
+            reconnectStatus={reconnectStatus}
+            reconnectAttempt={reconnectAttempt}
+            onRetryReconnect={handleRetryReconnect}
             onToggleMute={handleToggleMute}
             onToggleAudioRoute={handleToggleAudioRoute}
             onLeaveCall={handleLeaveCall}
           />
         )
+      )}
+
+      {/* Incoming Call Overlay Modal */}
+      {pendingInvite && (
+        <IncomingCallModal
+          invite={pendingInvite}
+          onAccept={handleAcceptInvite}
+          onDecline={handleDeclineInvite}
+        />
       )}
     </div>
   );

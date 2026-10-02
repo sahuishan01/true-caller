@@ -37,6 +37,9 @@ export type SignalingMessageType =
   | 'AUDIO_LEVEL'
   | 'PING'
   | 'PONG'
+  | 'CALL_INVITE'
+  | 'CALL_INVITE_RESPONSE'
+  | 'RECONNECT_REQUEST'
   | 'LEAVE_ROOM';
 
 export interface SignalingMessage<T = unknown> {
@@ -94,3 +97,49 @@ export interface RoomBeaconPacket {
   participantCount: number;
   timestamp: number;
 }
+
+export type DevicePresenceStatus = 'available' | 'in_call' | 'hosting';
+
+export interface DiscoveredDevice {
+  deviceId: string;
+  displayName: string;
+  ip: string;
+  port: number;
+  deviceType: 'android' | 'ios' | 'desktop';
+  status: DevicePresenceStatus;
+  currentRoomName?: string;
+  lastSeen: number;
+}
+
+export interface DeviceBeaconPacket {
+  protocol: 'truecall-device-v1';
+  deviceId: string;
+  displayName: string;
+  ip: string;
+  port: number;
+  deviceType: 'android' | 'ios' | 'desktop';
+  status: DevicePresenceStatus;
+  currentRoomName?: string;
+  timestamp: number;
+}
+
+export interface CallInvitePayload {
+  inviteId: string;
+  hostPeerId: string;
+  hostDisplayName: string;
+  hostIp: string;
+  port: number;
+  roomId: string;
+  roomName: string;
+  pin?: string;
+  timestamp: number;
+}
+
+export interface CallInviteResponsePayload {
+  inviteId: string;
+  fromDeviceId: string;
+  fromDisplayName: string;
+  accepted: boolean;
+  reason?: string;
+}
+

@@ -1,30 +1,65 @@
 import React, { useState } from 'react';
-import { RoomDetails } from '../../core/types/signaling.js';
+import { DiscoveredDevice, RoomDetails } from '../../core/types/signaling.js';
 import { NetworkStatusCard } from '../components/NetworkStatusCard.js';
 import { DiscoveredRoomsList } from '../components/DiscoveredRoomsList.js';
+import { DiscoveredDevicesList } from '../components/DiscoveredDevicesList.js';
+import { CreateGroupModal } from '../components/CreateGroupModal.js';
 import { THEME_TOKENS } from '../theme/tokens.js';
 
 export interface HomeScreenProps {
   localIp: string;
   isHotspotHost: boolean;
   discoveredRooms: RoomDetails[];
-  onHostCall: (roomName: string, pin?: string) => void;
+  discoveredDevices: DiscoveredDevice[];
+  onHostCallAndInvite: (
+    roomName: string,
+    pin: string | undefined,
+    invitedDevices: DiscoveredDevice[]
+  ) => void;
   onJoinRoom: (room: RoomDetails, pin?: string) => void;
   onDirectIpConnect: (ip: string, port?: number) => void;
+  onCallSingleDevice: (device: DiscoveredDevice) => void;
+  onScanDevicesNow?: () => void;
+  isScanningDevices?: boolean;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   localIp,
   isHotspotHost,
   discoveredRooms,
-  onHostCall,
+  discoveredDevices,
+  onHostCallAndInvite,
   onJoinRoom,
   onDirectIpConnect,
+  onCallSingleDevice,
+  onScanDevicesNow,
+  isScanningDevices = false,
 }) => {
-  const [showHostDialog, setShowHostDialog] = useState(false);
-  const [roomNameInput, setRoomNameInput] = useState('Offline Group');
-  const [pinInput, setPinInput] = useState('');
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<Set<string>>(
+    new Set()
+  );
   const [directIpInput, setDirectIpInput] = useState('');
+
+  const toggleSelectDevice = (deviceId: string) => {
+    setSelectedDeviceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(deviceId)) {
+        next.delete(deviceId);
+      } else {
+        next.add(deviceId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllDevices = () => {
+    setSelectedDeviceIds(new Set(discoveredDevices.map((d) => d.deviceId)));
+  };
+
+  const deselectAllDevices = () => {
+    setSelectedDeviceIds(new Set());
+  };
 
   return (
     <div
@@ -36,12 +71,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         display: 'flex',
         flexDirection: 'column',
         gap: THEME_TOKENS.spacing.lg,
-        maxWidth: '540px',
+        maxWidth: '560px',
         margin: '0 auto',
       }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginTop: '12px',
+        }}
+      >
         <div>
           <div
             style={{
@@ -52,7 +94,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               color: THEME_TOKENS.colors.textPrimary,
             }}
           >
-            TRUE<span style={{ color: THEME_TOKENS.colors.accentEmerald }}>CALLING</span>
+            TRUE
+            <span style={{ color: THEME_TOKENS.colors.accentEmerald }}>
+              CALLING
+            </span>
           </div>
           <div
             style={{
@@ -61,7 +106,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               color: THEME_TOKENS.colors.textMuted,
             }}
           >
-            ZERO-INTERNET • CROSS-PLATFORM MESH
+            OFFLINE P2P GROUP VOICE MESH
           </div>
         </div>
 
@@ -84,12 +129,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       <NetworkStatusCard
         localIp={localIp}
         isHotspotHost={isHotspotHost}
-        peerCount={discoveredRooms.reduce((acc, r) => acc + r.participantCount, 0)}
+        peerCount={discoveredDevices.length}
       />
 
-      {/* Primary Action Button */}
+      {/* Primary Action Button - Explicit Group Creation */}
       <button
-        onClick={() => setShowHostDialog(true)}
+        onClick={() => setShowCreateGroupModal(true)}
         style={{
           backgroundColor: THEME_TOKENS.colors.accentEmerald,
           color: '#080C14',
@@ -97,8 +142,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           borderRadius: THEME_TOKENS.radius.lg,
           padding: '16px',
           fontFamily: THEME_TOKENS.fonts.headings,
-          fontSize: '16px',
-          fontWeight: 700,
+          fontSize: '15px',
+          fontWeight: 800,
           cursor: 'pointer',
           boxShadow: '0 8px 24px rgba(16, 185, 129, 0.35)',
           display: 'flex',
@@ -108,8 +153,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           transition: 'all 0.15s ease',
         }}
       >
-        <span>+ HOST GROUP CALL</span>
+        <span>
+          {selectedDeviceIds.size > 0
+            ? `+ CREATE GROUP & INVITE (${selectedDeviceIds.size})`
+            : '+ CREATE GROUP CALL'}
+        </span>
       </button>
+
+      {/* Discovered Devices on Network */}
+      <DiscoveredDevicesList
+        devices={discoveredDevices}
+        selectedDeviceIds={selectedDeviceIds}
+        onToggleSelectDevice={toggleSelectDevice}
+        onSelectAll={selectAllDevices}
+        onDeselectAll={deselectAllDevices}
+        onCallDevice={onCallSingleDevice}
+        onScanNow={onScanDevicesNow}
+        isScanning={isScanningDevices}
+      />
 
       {/* Discovered Rooms Feed */}
       <DiscoveredRoomsList
@@ -177,132 +238,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </div>
 
-      {/* Host Call Dialog Modal */}
-      {showHostDialog && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-            padding: THEME_TOKENS.spacing.md,
+      {/* Explicit Group Creation Modal */}
+      {showCreateGroupModal && (
+        <CreateGroupModal
+          discoveredDevices={discoveredDevices}
+          initialSelectedDeviceIds={selectedDeviceIds}
+          onClose={() => setShowCreateGroupModal(false)}
+          onCreateAndInvite={(roomName, pin, invitedDevices) => {
+            setShowCreateGroupModal(false);
+            onHostCallAndInvite(roomName, pin, invitedDevices);
           }}
-          onClick={() => setShowHostDialog(false)}
-        >
-          <div
-            style={{
-              backgroundColor: '#0F172A',
-              border: `1px solid ${THEME_TOKENS.colors.borderSubtle}`,
-              borderRadius: THEME_TOKENS.radius.lg,
-              padding: THEME_TOKENS.spacing.lg,
-              maxWidth: '380px',
-              width: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: THEME_TOKENS.spacing.md,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <span
-              style={{
-                fontFamily: THEME_TOKENS.fonts.headings,
-                fontSize: '18px',
-                fontWeight: 700,
-                color: THEME_TOKENS.colors.textPrimary,
-              }}
-            >
-              Configure Group Call
-            </span>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontFamily: THEME_TOKENS.fonts.labels, fontSize: '11px', color: THEME_TOKENS.colors.textMuted }}>
-                ROOM NAME
-              </label>
-              <input
-                type="text"
-                value={roomNameInput}
-                onChange={(e) => setRoomNameInput(e.target.value)}
-                style={{
-                  backgroundColor: '#1E293B',
-                  border: `1px solid ${THEME_TOKENS.colors.borderSubtle}`,
-                  borderRadius: THEME_TOKENS.radius.sm,
-                  padding: '10px 12px',
-                  color: '#FFF',
-                  fontSize: '14px',
-                  outline: 'none',
-                }}
-              />
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontFamily: THEME_TOKENS.fonts.labels, fontSize: '11px', color: THEME_TOKENS.colors.textMuted }}>
-                OPTIONAL PIN (LEAVE BLANK FOR OPEN JOIN)
-              </label>
-              <input
-                type="password"
-                placeholder="4-digit PIN"
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                style={{
-                  backgroundColor: '#1E293B',
-                  border: `1px solid ${THEME_TOKENS.colors.borderSubtle}`,
-                  borderRadius: THEME_TOKENS.radius.sm,
-                  padding: '10px 12px',
-                  color: '#FFF',
-                  fontFamily: THEME_TOKENS.fonts.labels,
-                  fontSize: '14px',
-                  outline: 'none',
-                }}
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-              <button
-                onClick={() => setShowHostDialog(false)}
-                style={{
-                  flex: 1,
-                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                  color: THEME_TOKENS.colors.textSecondary,
-                  border: 'none',
-                  borderRadius: THEME_TOKENS.radius.md,
-                  padding: '12px',
-                  fontFamily: THEME_TOKENS.fonts.labels,
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                }}
-              >
-                CANCEL
-              </button>
-              <button
-                onClick={() => {
-                  setShowHostDialog(false);
-                  onHostCall(roomNameInput, pinInput || undefined);
-                }}
-                style={{
-                  flex: 1,
-                  backgroundColor: THEME_TOKENS.colors.accentEmerald,
-                  color: '#080C14',
-                  border: 'none',
-                  borderRadius: THEME_TOKENS.radius.md,
-                  padding: '12px',
-                  fontFamily: THEME_TOKENS.fonts.labels,
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                START ROOM
-              </button>
-            </div>
-          </div>
-        </div>
+        />
       )}
     </div>
   );

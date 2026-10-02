@@ -1,7 +1,11 @@
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { NETWORK_CONSTANTS } from '../constants/network_constants.js';
+import { TypedEventEmitter } from '../utils/event_emitter.js';
 import {
+  DiscoveredDevice,
+  CallInvitePayload,
+  CallInviteResponsePayload,
   JoinAcceptedPayload,
   JoinRejectedPayload,
   JoinRequestPayload,
@@ -22,7 +26,7 @@ export interface SignalingServerConfig {
   maxParticipants?: number;
 }
 
-export class LocalSignalingServer {
+export class LocalSignalingServer extends TypedEventEmitter {
   private server: http.Server | null = null;
   private wss: WebSocketServer | null = null;
   private peers: Map<string, { profile: PeerProfile; socket: WebSocket }> = new Map();
@@ -30,11 +34,25 @@ export class LocalSignalingServer {
   private isRunning: boolean = false;
 
   constructor(config: SignalingServerConfig) {
+    super();
     this.config = {
       port: NETWORK_CONSTANTS.SIGNALING_PORT,
       maxParticipants: 8,
       hostDeviceType: 'android',
       ...config,
+    };
+  }
+
+  public getDeviceInfo(): DiscoveredDevice {
+    return {
+      deviceId: this.config.hostPeerId,
+      displayName: this.config.hostDisplayName,
+      ip: this.config.hostIp,
+      port: this.config.port || NETWORK_CONSTANTS.SIGNALING_PORT,
+      deviceType: this.config.hostDeviceType || 'android',
+      status: this.isRunning ? 'hosting' : 'available',
+      currentRoomName: this.config.roomName,
+      lastSeen: Date.now(),
     };
   }
 
@@ -45,6 +63,17 @@ export class LocalSignalingServer {
 
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
+        // Universal CORS headers for local LAN/Hotspot WebViews and browsers
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+
         // Fast-probe HTTP endpoints for LAN/Hotspot peers
         if (req.method === 'GET' && req.url === '/health') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -55,6 +84,37 @@ export class LocalSignalingServer {
         if (req.method === 'GET' && req.url === '/room-info') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(this.getRoomDetails()));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/device-info') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(this.getDeviceInfo()));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/invite') {
+          let body = '';
+          req.on('data', (chunk) => {
+            body += chunk;
+          });
+          req.on('end', () => {
+            try {
+              const invite = JSON.parse(body) as CallInvitePayload;
+              this.emit('callInvite', invite);
+              const response: CallInviteResponsePayload = {
+                inviteId: invite.inviteId,
+                fromDeviceId: this.config.hostPeerId,
+                fromDisplayName: this.config.hostDisplayName,
+                accepted: true,
+              };
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(response));
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'invalid_json' }));
+            }
+          });
           return;
         }
 
